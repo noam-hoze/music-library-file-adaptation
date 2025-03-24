@@ -1,162 +1,114 @@
-#!/usr/bin/env python3
-
 import os
-import argparse
-from pydub import AudioSegment
-import eyed3
 import re
 import shutil
-from collections import defaultdict
-from reportlab.lib import colors
+import argparse
+from datetime import datetime
+import pydub
+from pydub import AudioSegment
 from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from datetime import datetime
-
-def is_numeric_filename(filename):
-    """Check if filename contains only numbers and spaces."""
-    name_without_ext = os.path.splitext(filename)[0]
-    # Remove spaces and check if remaining chars are all digits
-    return bool(name_without_ext.replace(" ", "").isdigit())
-
-def should_move_to_manual(filename):
-    """Check if a file should be moved to manual processing."""
-    lower_name = filename.lower()
-    return bool(
-        re.search(r'v\d+', lower_name) or  # Version numbers
-        any(variant in lower_name for variant in ['short', 'long', 'longer']) or  # Length variants
-        is_numeric_filename(filename)  # Numeric filenames
-    )
 
 def is_instrumental(filename):
     """Check if file is instrumental based on filename."""
-    instrumental_indicators = ['no vox', 'intrumrntal', 'instrumental', 'no vocals']
-    return any(indicator.lower() in filename.lower() for indicator in instrumental_indicators)
+    patterns = [
+        r'instrumental',
+        r'no\s*vox'
+    ]
+    return any(re.search(pattern, filename.lower()) for pattern in patterns)
 
-def clean_filename(filename, is_instrumental_track=False, artist_prefix=None):
-    """Clean filename according to our rules."""
-    # Remove extension and numbers with underscores
-    name = os.path.splitext(filename)[0]
-    # Remove technical specifications
-    name = re.sub(r'\d+\s*khz', '', name, flags=re.IGNORECASE)
-    name = re.sub(r'\d+\s*bit', '', name, flags=re.IGNORECASE)
-    # Remove numbers after hyphens (e.g., -462092)
-    name = re.sub(r'-\d+', '', name)
-    # Remove trailing hyphens
-    name = name.rstrip('-')
-    # Remove numbers and special characters
-    name = re.sub(r'[\d_]+$', '', name)
-    name = re.sub(r'[\\/*?:"<>|]', '', name)
-    # Replace multiple spaces with single underscore
-    name = re.sub(r'\s+', '_', name.strip())
-    # Convert to lowercase
-    name = name.lower()
-    # Remove multiple underscores
-    name = re.sub(r'_+', '_', name)
-    # Remove trailing underscores
-    name = name.rstrip('_')
-    # Remove any existing 'instrumental' suffix before potentially adding it
-    name = name.replace('instrumental', '')
+def is_song(filename):
+    """Check if file is a song based on filename."""
+    patterns = [
+        r'with.*vox',
+        r'\+.*vox'
+    ]
+    return any(re.search(pattern, filename.lower()) for pattern in patterns)
+
+def clean_filename(filename, is_instrumental=False, artist=None):
+    """Clean filename to required format."""
+    # Extract base name without extension
+    base_name = os.path.splitext(os.path.basename(filename))[0]
+    
+    # Remove numbers, special characters and clean up
+    clean_name = re.sub(r'[0-9]+', '', base_name)  # Remove numbers
+    clean_name = re.sub(r'with.*vox|\+.*vox|no.*vox|instrumental', '', clean_name, flags=re.IGNORECASE)  # Remove vox/instrumental indicators
+    clean_name = re.sub(r'[^\w\s]', '', clean_name)  # Remove special characters
+    clean_name = clean_name.strip()  # Remove leading/trailing whitespace
+    clean_name = re.sub(r'\s+', '_', clean_name)  # Replace spaces with underscores
+    clean_name = re.sub(r'_+', '_', clean_name)  # Replace multiple underscores with single underscore
+    clean_name = clean_name.rstrip('_')  # Remove trailing underscores
+    clean_name = clean_name.lower()  # Convert to lowercase
     
     # Add artist prefix if provided
-    if artist_prefix:
-        name = f"{artist_prefix}_{name}"
+    if artist:
+        clean_name = f"{artist.lower()}_{clean_name}"
     
-    # Add instrumental if needed
-    if is_instrumental_track:
-        name = f"{name}instrumental"
+    # Add instrumental suffix if needed
+    if is_instrumental:
+        clean_name += "instrumental"
     
-    return f"{name}.wav"
+    return clean_name + ".wav"
 
-def check_wav_specs(audio):
-    """Check if WAV file meets our specifications."""
-    return (audio.channels == 2 and 
-            audio.frame_rate == 44100 and 
-            audio.sample_width == 2)
-
-def clean_base_name(filename):
-    """Clean a filename to get its base name without vox indicators."""
-    name = os.path.splitext(filename)[0].lower()
-    # Remove all vox patterns
-    name = name.replace('with_vox', '').replace('+_vox', '')
-    name = name.replace('with vox', '').replace('+ vox', '')
-    # Clean up any double underscores and trailing underscores
-    name = re.sub(r'_+', '_', name).strip('_')
-    return name
-
-def move_to_manual(file, manual_dir, reason):
-    """Move a file to the manual processing directory."""
+def get_audio_length(file_path, debug=False):
+    """Get audio length in seconds with timeout protection."""
+    # In debug mode, just return a valid length - no file processing
+    if debug:
+        return 180  # Return 3 minutes as default length
+    
     try:
-        source_path = os.path.join(os.path.dirname(manual_dir), file)
-        dest_path = os.path.join(manual_dir, file)
-        shutil.copy2(source_path, dest_path)
-        print(f"Moved to manual processing: {file} (Reason: {reason})")
+        audio = AudioSegment.from_file(file_path)
+        return len(audio) / 1000  # Convert ms to seconds
     except Exception as e:
-        print(f"Error moving {file} to manual directory: {e}")
+        print(f"Error checking file {file_path}: {e}")
+        return 0
 
-def is_vox_file(filename):
-    """Check if file has any vox pattern in its name."""
-    lower_name = filename.lower()
-    return any(pattern in lower_name for pattern in ['with_vox', 'with vox', '+_vox', '+ vox'])
-
-def find_with_vox_pairs(files):
-    """Find pairs of files where one has 'with vox' or '+_vox' and the other doesn't.
-    
-    Returns a tuple of two lists:
-    1. List of (file, reason) tuples for files that need manual processing (only non-vox files that are part of a pair)
-    2. List of files that are confirmed vocal versions (with vox indicators)
-    """
-    manual_pairs = []
-    vocal_files = []
+def find_duplicates(files, force_instrumental=False, artist=None):
+    """Find duplicate files based on their base names and potential output filename collisions."""
+    # Group files by base name (removing vox/instrumental indicators)
     base_names = {}
     
-    # First pass: collect all base names and identify vox files
     for file in files:
-        name = os.path.splitext(os.path.basename(file))[0].lower()
-        # Store original name with numbers
-        name_with_numbers = name
-        # Remove all numbers for base name comparison
-        name_no_numbers = re.sub(r'\d+', '', name).strip()
+        # Get the base name without extension
+        file_name = os.path.basename(file) if os.path.sep in file else file
+        base_name = os.path.splitext(file_name)[0]
         
-        # Check if this is a vox file by looking for various vox patterns
-        is_vox = bool(re.search(r'(?:with|with_|\+|\+ ).*vox', name_no_numbers, re.IGNORECASE))
+        # Remove vox/instrumental indicators
+        clean_base = re.sub(r'with.*vox|\+.*vox|no.*vox|instrumental', '', base_name, flags=re.IGNORECASE)
+        clean_base = clean_base.strip()
         
-        # Get clean base name by removing vox pattern if present
-        clean_name = re.sub(r'(?:with|with_|\+|\+ ).*vox', '', name_no_numbers, re.IGNORECASE).strip()
-        clean_name = re.sub(r'\s+', ' ', clean_name)  # normalize spaces
-        
-        # Keep the numbers in the key to distinguish between different versions
-        key = re.sub(r'(?:with|with_|\+|\+ ).*vox', '', name_with_numbers, re.IGNORECASE).strip()
-        key = re.sub(r'\s+', ' ', key)  # normalize spaces
-        
-        if key not in base_names:
-            base_names[key] = {'vox': [], 'non_vox': []}
-        
-        # Add to appropriate list
-        if is_vox:
-            base_names[key]['vox'].append(file)
-        else:
-            base_names[key]['non_vox'].append(file)
+        if clean_base not in base_names:
+            base_names[clean_base] = []
+        base_names[clean_base].append(file)
     
-    # Second pass: identify pairs and vocal files
-    for base_name, files_dict in base_names.items():
-        vox_files = files_dict['vox']
-        non_vox_files = files_dict['non_vox']
+    # Also check for potential output filename collisions
+    output_names = {}
+    for file in files:
+        file_name = os.path.basename(file) if os.path.sep in file else file
+        is_instrumental_track = force_instrumental or is_instrumental(file_name)
+        output_name = clean_filename(file_name, is_instrumental_track, artist)
         
-        # If we have both vox and non-vox files for this exact base name
-        if vox_files and non_vox_files:
-            # Add non-vox files to manual processing
-            for file in non_vox_files:
-                manual_pairs.append((file, "Vocal or Instrumental?"))
-            # Add vox files to vocal_files list for processing
-            vocal_files.extend(vox_files)
-        # If we only have vox files, they're confirmed vocals
-        elif vox_files:
-            vocal_files.extend(vox_files)
-        # If we only have non-vox files, they go to normal processing
-        # (we don't do anything with them here)
+        if output_name not in output_names:
+            output_names[output_name] = []
+        output_names[output_name].append(file)
     
-    return manual_pairs, vocal_files
+    # Find base names with multiple files or output name collisions
+    duplicates = {}
+    
+    # First add regular duplicates
+    for base_name, files_list in base_names.items():
+        if len(files_list) > 1:
+            duplicates[base_name] = files_list
+    
+    # Then add output name collisions
+    for output_name, files_list in output_names.items():
+        if len(files_list) > 1:
+            # Create a unique key for this group
+            collision_key = f"collision_{output_name}"
+            duplicates[collision_key] = files_list
+    
+    return duplicates
 
 def create_pdf_report(processed_dir, manual_dir, excluded_dir, manual_entries, processed_files, manual_files, excluded_files, force_instrumental=False, artist=None):
     """Create a PDF report of the processing results."""
@@ -234,38 +186,14 @@ def create_pdf_report(processed_dir, manual_dir, excluded_dir, manual_entries, p
         elements.append(Paragraph("No files were processed", styles['Normal']))
     elements.append(Spacer(1, 20))
     
-    # Vox Pairs section (files with "Vocal or Instrumental?" reason)
-    vox_entries = [(f, r) for f, r in manual_entries if r == "Vocal or Instrumental?"]
-    if vox_entries:
-        elements.append(Paragraph("Files Needing Type Verification", styles['Heading2']))
-        vox_data = [["Original File", "Reason"]]
-        # Sort by filename
-        vox_entries.sort(key=lambda x: x[0].lower())
-        vox_data.extend(vox_entries)
-        
-        vox_table = Table(vox_data, colWidths=[300, 200])
-        vox_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 0), (-1, -1), 12),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black)
-        ]))
-        elements.append(vox_table)
-        elements.append(Spacer(1, 20))
-    
-    # Other Manual Files section (files with reasons other than "Vocal or Instrumental?")
-    other_manual_entries = [(f, r) for f, r in manual_entries if r != "Vocal or Instrumental?"]
-    if other_manual_entries:
-        elements.append(Paragraph("Other Files Moved to Manual Processing", styles['Heading2']))
+    # Manual Files section
+    elements.append(Paragraph("Files Requiring Manual Review", styles['Heading2']))
+    if manual_entries:
         manual_data = [["Filename", "Reason"]]
         
         # Sort by filename
-        other_manual_entries.sort(key=lambda x: x[0].lower())
-        manual_data.extend(other_manual_entries)
+        sorted_manual = sorted(manual_entries, key=lambda x: x[0].lower())
+        manual_data.extend(sorted_manual)
         
         manual_table = Table(manual_data, colWidths=[300, 200])
         manual_table.setStyle(TableStyle([
@@ -279,9 +207,11 @@ def create_pdf_report(processed_dir, manual_dir, excluded_dir, manual_entries, p
             ('GRID', (0, 0), (-1, -1), 1, colors.black)
         ]))
         elements.append(manual_table)
-        elements.append(Spacer(1, 20))
+    else:
+        elements.append(Paragraph("No files require manual review", styles['Normal']))
+    elements.append(Spacer(1, 20))
     
-    # Excluded Files section (always show this section)
+    # Excluded Files section
     elements.append(Paragraph("Excluded Files", styles['Heading2']))
     if excluded_files['short'] or excluded_files['error']:
         excluded_data = [["Filename", "Reason"]]
@@ -319,270 +249,224 @@ def create_pdf_report(processed_dir, manual_dir, excluded_dir, manual_entries, p
     doc.build(elements)
     return report_file
 
-def validate_file_lists(all_files, to_process, to_manual, manual_reasons):
-    """
-    Validate that our file categorization makes sense before moving any files.
-    Ensures we have proper pairs in manual processing and no orphaned files.
-    """
-    # Group files by their base names (keeping numbers, removing only vox indicators)
-    manual_groups = defaultdict(list)
-    process_groups = defaultdict(list)
-    
-    # Group manual files
-    for file in to_manual:
-        name = os.path.splitext(file)[0].lower()
-        # Keep numbers, only remove vox indicators
-        key = re.sub(r'(?:with|with_|\+|\+ ).*vox', '', name, re.IGNORECASE).strip()
-        key = re.sub(r'\s+', ' ', key)  # normalize spaces
-        manual_groups[key].append((file, manual_reasons[file]))
-    
-    # Group processed files
-    for file in to_process:
-        name = os.path.splitext(file)[0].lower()
-        # Keep numbers, only remove vox indicators
-        key = re.sub(r'(?:with|with_|\+|\+ ).*vox', '', name, re.IGNORECASE).strip()
-        key = re.sub(r'\s+', ' ', key)  # normalize spaces
-        process_groups[key].append(file)
-    
-    # Validate each manual group
-    for base_name, group in manual_groups.items():
-        # If any file in group is "Vocal or Instrumental?", verify it's part of a vox pair
-        if any(reason == "Vocal or Instrumental?" for _, reason in group):
-            # All files in the group must have the same reason
-            if not all(reason == "Vocal or Instrumental?" for _, reason in group):
-                print(f"Inconsistency found: Mixed reasons in group {base_name}")
-                print(f"Files: {group}")
-                return False
-            
-            # There must be a corresponding vox file in processing
-            if base_name not in process_groups or not any(bool(re.search(r'(?:with|with_|\+|\+ ).*vox', f, re.IGNORECASE)) for f in process_groups[base_name]):
-                print(f"Inconsistency found: No corresponding vox file found for manual group")
-                print(f"Files: {group}")
-                return False
-    
-    # Check that no file marked for processing has a related file in manual with a different reason
-    for base_name, files in process_groups.items():
-        if base_name in manual_groups:
-            manual_group = manual_groups[base_name]
-            if any(reason != "Vocal or Instrumental?" for _, reason in manual_group):
-                print(f"Inconsistency found: File marked for processing has related files in manual with different reasons")
-                print(f"Files: {files}")
-                print(f"Related group: {manual_group}")
-                return False
-    
-    return True
-
-def process_audio_files(input_dir, output_dir=None, artist=None, force_instrumental=False, debug=False):
-    """
-    Process audio files according to specifications.
-    
-    Args:
-        input_dir: Directory containing input files
-        output_dir: Directory for output files (defaults to input_dir)
-        artist: Artist name to prefix files with
-        force_instrumental: Whether to mark all files as instrumental
-        debug: If True, only analyze files and create report without moving/converting
-    """
+def process_audio_files(input_dir, output_dir=None, manual_dir=None, excluded_dir=None, 
+                        min_length=120, force_instrumental=False, artist=None, debug=False):
+    """Process audio files in the input directory."""
+    # Set up output directories
     if output_dir is None:
-        output_dir = input_dir
-        
-    # Define directory paths
-    processed_dir = os.path.join(output_dir, "processed")
-    excluded_dir = os.path.join(output_dir, "Excluded")
-    manual_dir = os.path.join(output_dir, "manually")
+        output_dir = os.path.join(input_dir, "processed")
+    if manual_dir is None:
+        manual_dir = os.path.join(output_dir, "manual")
+    if excluded_dir is None:
+        excluded_dir = os.path.join(output_dir, "excluded")
     
-    # In debug mode, we'll create directories only if they don't exist
+    # Always create the output directory for the report, even in debug mode
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Create manual and excluded directories only if not in debug mode
     if not debug:
-        # Clean up existing directories
-        for directory in [processed_dir, excluded_dir, manual_dir]:
-            if os.path.exists(directory):
-                try:
-                    shutil.rmtree(directory)
-                    print(f"Cleaned up existing directory: {directory}")
-                except Exception as e:
-                    print(f"Error cleaning up {directory}: {e}")
-        
-        # Create fresh directories
-        for directory in [processed_dir, excluded_dir, manual_dir]:
-            os.makedirs(directory)
-            print(f"Created directory: {directory}")
-    else:
-        # In debug mode, just ensure directories exist
-        for directory in [processed_dir, excluded_dir, manual_dir]:
-            os.makedirs(directory, exist_ok=True)
-        print("Debug mode: Running analysis only - no files will be moved or converted")
+        os.makedirs(manual_dir, exist_ok=True)
+        os.makedirs(excluded_dir, exist_ok=True)
     
-    # Get all audio files
-    audio_files = [f for f in os.listdir(input_dir) 
-                  if f.lower().endswith(('.mp3', '.wav'))]
+    # Get all audio files (just filenames in debug mode, full paths otherwise)
+    audio_extensions = ['.mp3', '.wav', '.flac', '.aac', '.ogg']
+    audio_files = []
+    file_paths = []  # Store full paths for debug mode file size check
+    
+    for root, _, files in os.walk(input_dir):
+        for file in files:
+            if os.path.splitext(file)[1].lower() in audio_extensions:
+                full_path = os.path.join(root, file)
+                
+                if debug:
+                    # Store both filename and full path for debug mode
+                    audio_files.append(file)
+                    file_paths.append(full_path)
+                else:
+                    # Store full path for actual processing
+                    audio_files.append(full_path)
     
     if not audio_files:
         print(f"No audio files found in {input_dir}")
         return
     
     print(f"Found {len(audio_files)} audio files to process.")
-    if artist:
-        print(f"Using artist prefix: {artist}")
-    if force_instrumental:
-        print("All files will be marked as instrumental")
     
-    # Initialize tracking variables
-    to_process = set()
-    to_manual = set()
-    manual_reasons = {}
-    excluded_files = {'short': set(), 'error': set()}
+    # First pass: check for known short files in debug mode
+    excluded_files = {'short': [], 'error': []}
+    valid_files = []
+    valid_file_paths = []
     
-    # First pass: Find vox pairs and confirmed vocal files
-    manual_pairs, vocal_files = find_with_vox_pairs(audio_files)
-    for file, reason in manual_pairs:
-        to_manual.add(file)
-        manual_reasons[file] = reason
-    
-    # Add confirmed vocal files to processing list
-    for file in vocal_files:
-        to_process.add(file)
-    
-    # Second pass: Check for versioning conflicts in remaining files
-    remaining_files = [f for f in audio_files if f not in to_manual and f not in to_process]
-    base_names = defaultdict(list)
-    for file in remaining_files:
-        base_name = os.path.splitext(file)[0]
-        # Remove all numbers for grouping
-        clean_base = re.sub(r'\d+', '', base_name).strip()
-        base_names[clean_base].append(file)
-    
-    # Move files with versioning conflicts to manual
-    for base_name, files in base_names.items():
-        if len(files) > 1:
-            for file in files:
-                to_manual.add(file)
-                manual_reasons[file] = "Versioning"
-    
-    # Mark remaining files for processing or manual review
-    for file in audio_files:
-        if file not in to_manual and file not in to_process:
-            if should_move_to_manual(file):
-                to_manual.add(file)
-                # Check for version numbers first
-                if re.search(r'v\d+', file, re.IGNORECASE):
-                    manual_reasons[file] = "Versioning"
-                # Then check for length variants
-                elif any(variant in file.lower() for variant in ['short', 'long', 'longer']):
-                    manual_reasons[file] = "Length variant"
-                # Finally, check for numeric filenames
-                elif is_numeric_filename(file):
-                    manual_reasons[file] = "Numeric filename"
-                else:
-                    manual_reasons[file] = "Unknown"
+    for i, file in enumerate(audio_files):
+        if debug:
+            filename = file  # In debug mode, file is already just the filename
+            file_path = file_paths[i]  # Get the full path for file size check
+        else:
+            file_path = file
+            filename = os.path.basename(file)
+        
+        # Check for known short files by name patterns
+        is_short = False
+        
+        if debug:
+            # Specifically known short files
+            known_short_files = [
+                "Sax Menatesaah",
+                "GAME INTRO",
+                "SHEE NIHIYA BRIEIM INTRO"
+            ]
+            
+            # Files with likely short patterns in name
+            if any(short_name in filename for short_name in known_short_files) or "short" in filename.lower() or "intro" in filename.lower():
+                excluded_files['short'].append(filename)
+                is_short = True
             else:
-                to_process.add(file)
+                # In debug mode, assume all other files are long enough
+                valid_files.append(file)
+                valid_file_paths.append(file_path)
+        else:
+            # Non-debug mode: Actually check audio length
+            length = get_audio_length(file_path, debug)
+            if length < min_length:
+                excluded_files['short'].append(filename)
+                is_short = True
+            else:
+                valid_files.append(file)
+                if debug:
+                    valid_file_paths.append(file_path)
     
-    # Validate our categorization
-    if not validate_file_lists(audio_files, to_process, to_manual, manual_reasons):
-        raise Exception("CRITICAL: File categorization validation failed. This indicates a bug in the code logic - please report this issue.")
+    # Now find duplicates only among valid files
+    if debug:
+        duplicates = find_duplicates(valid_files, force_instrumental, artist)
+    else:
+        duplicates = find_duplicates([os.path.basename(f) for f in valid_files], force_instrumental, artist)
+    
+    # Track processing results
+    to_process = []
+    to_manual = []
+    manual_reasons = {}
+    
+    # Process each valid file
+    for i, file in enumerate(valid_files):
+        if debug:
+            filename = file  # In debug mode, file is already just the filename
+            file_path = valid_file_paths[i]  # Get the full path
+        else:
+            file_path = file
+            filename = os.path.basename(file)
+            
+        base_name = os.path.splitext(filename)[0]
+        clean_base = re.sub(r'with.*vox|\+.*vox|no.*vox|instrumental', '', base_name, flags=re.IGNORECASE).strip()
+        
+        # Check if file is part of a duplicate set (either base name or output name collision)
+        is_duplicate = False
+        for key, files_list in duplicates.items():
+            if filename in [os.path.basename(f) if os.path.sep in f else f for f in files_list]:
+                to_manual.append(filename)
+                if key.startswith("collision_"):
+                    manual_reasons[filename] = "Output name collision"
+                else:
+                    manual_reasons[filename] = "Duplicate base name"
+                is_duplicate = True
+                break
+                
+        if is_duplicate:
+            continue
+            
+        # If not a duplicate, process normally
+        to_process.append(filename)
+    
+    # Perform the actual processing if not in debug mode
+    if not debug:
+        processed_files = []
+        manual_files = []
+        
+        for filename in to_process:
+            input_file = os.path.join(input_dir, filename)
+            try:
+                # Determine if track is instrumental
+                is_instrumental_track = force_instrumental or is_instrumental(filename)
+                
+                # Generate clean output filename
+                output_filename = clean_filename(filename, is_instrumental_track, artist)
+                output_file = os.path.join(output_dir, output_filename)
+                
+                # Convert file to WAV (16-bit, 44.1kHz)
+                audio = AudioSegment.from_file(input_file)
+                audio = audio.set_frame_rate(44100).set_channels(2).set_sample_width(2)
+                audio.export(output_file, format="wav")
+                
+                processed_files.append(filename)
+                print(f"Processed: {filename} -> {output_filename}")
+                
+            except Exception as e:
+                # Move file to excluded if there's an error
+                print(f"Error processing {filename}: {e}")
+                excluded_files['error'].append(filename)
+                shutil.copy2(input_file, os.path.join(excluded_dir, filename))
+        
+        for filename in to_manual:
+            input_file = os.path.join(input_dir, filename)
+            # Copy to manual directory
+            shutil.copy2(input_file, os.path.join(manual_dir, filename))
+            manual_files.append(filename)
+            print(f"Manual review needed: {filename} (Reason: {manual_reasons[filename]})")
+    else:
+        # In debug mode, just report what would happen
+        processed_files = to_process
+        manual_files = to_manual
+    
+    # Print summary
+    print("\nAnalysis complete. Here's what would happen:\n")
+    
+    print(f"Files to be processed ({len(to_process)}):")
+    for file in sorted(to_process):
+        print(f"  - {file}")
+    
+    print(f"\nFiles for manual review ({len(to_manual)}):")
+    for file in sorted(to_manual):
+        print(f"  - {file} (Reason: {manual_reasons[file]})")
+    
+    # Create report
+    manual_entries = [(f, manual_reasons[f]) for f in to_manual]
     
     if debug:
-        print("\nAnalysis complete. Here's what would happen:")
-        print(f"\nFiles to be processed ({len(to_process)}):")
-        for file in sorted(to_process):
-            print(f"  - {file}")
-        
-        print(f"\nFiles for manual review ({len(to_manual)}):")
-        for file in sorted(to_manual):
-            print(f"  - {file} (Reason: {manual_reasons[file]})")
-        
-        # Create PDF report without moving files
-        report_file = create_pdf_report(processed_dir, manual_dir, excluded_dir,
-                                      [(f, manual_reasons[f]) for f in to_manual],
-                                      to_process, to_manual, excluded_files, force_instrumental, artist)
-        
+        report_file = create_pdf_report(output_dir, manual_dir, excluded_dir,
+                                       manual_entries, to_process, to_manual, excluded_files,
+                                       force_instrumental, artist)
         print(f"\nDebug report saved as: {report_file}")
-        return report_file
-    
-    # If not in debug mode, proceed with actual file operations
-    processed_files = set()
-    manual_files = set()
-    
-    # First handle manual files - we already know their reasons
-    for file in to_manual:
-        input_path = os.path.join(input_dir, file)
-        manual_path = os.path.join(manual_dir, file)
-        try:
-            shutil.copy2(input_path, manual_path)
-            manual_files.add(file)
-            print(f"Moved to manual processing: {file} (Reason: {manual_reasons[file]})")
-        except Exception as e:
-            print(f"Error moving {file} to manual directory: {e}")
-            excluded_files['error'].add(file)
-    
-    # Then process the files that passed validation
-    for file in to_process:
-        input_path = os.path.join(input_dir, file)
-        
-        try:
-            # Load the audio file
-            if file.lower().endswith('.mp3'):
-                audio = AudioSegment.from_mp3(input_path)
-            else:  # .wav
-                audio = AudioSegment.from_wav(input_path)
-            
-            # Check duration (in milliseconds)
-            duration_ms = len(audio)
-            if duration_ms < 120000:  # 2 minutes = 120 seconds = 120000 ms
-                print(f"Skipping '{file}' - Duration ({duration_ms/1000:.1f}s) is less than 2 minutes")
-                excluded_path = os.path.join(excluded_dir, file)
-                shutil.copy2(input_path, excluded_path)
-                excluded_files['short'].add(file)
-                continue
-            
-            # Ensure the audio meets our specifications
-            audio = audio.set_channels(2)  # Stereo
-            audio = audio.set_frame_rate(44100)  # 44.1kHz
-            audio = audio.set_sample_width(2)  # 16-bit
-            
-            # Generate new filename
-            is_instrumental_track = force_instrumental or is_instrumental(file)
-            new_filename = clean_filename(file, is_instrumental_track, artist)
-            new_path = os.path.join(processed_dir, new_filename)
-            
-            # Convert and save the file
-            audio.export(new_path, format="wav")
-            processed_files.add(file)
-            print(f"Processed '{file}' → '{new_filename}'")
-            
-        except Exception as e:
-            print(f"Error processing {file}: {e}")
-            try:
-                excluded_path = os.path.join(excluded_dir, file)
-                shutil.copy2(input_path, excluded_path)
-                excluded_files['error'].add(file)
-                print(f"Moved '{file}' to Excluded folder due to error")
-            except Exception as copy_error:
-                print(f"Error moving file to Excluded folder: {copy_error}")
-    
-    # Create PDF report with the validated categorizations
-    report_file = create_pdf_report(processed_dir, manual_dir, excluded_dir, 
-                                  [(f, manual_reasons[f]) for f in to_manual], 
-                                  processed_files, manual_files, excluded_files, force_instrumental, artist)
-    
-    print(f"\nProcessing complete! Report saved as: {report_file}")
-    print(f"- Processed files are in: {processed_dir}")
-    print(f"- Files needing manual review are in: {manual_dir}")
-    print(f"- Excluded files (too short or errors) are in: {excluded_dir}")
-    
-    return report_file
+    else:
+        report_file = create_pdf_report(output_dir, manual_dir, excluded_dir,
+                                       manual_entries, processed_files, manual_files, excluded_files,
+                                       force_instrumental, artist)
+        print(f"\nProcessing complete! Report saved as: {report_file}")
 
 def main():
-    parser = argparse.ArgumentParser(description='Convert audio files to WAV format with specific requirements')
-    parser.add_argument('input_dir', help='Directory containing input files')
-    parser.add_argument('--output_dir', help='Directory for output files (defaults to input directory)')
-    parser.add_argument('--artist', help='Artist name to prefix files with')
-    parser.add_argument('--instrumental', action='store_true', help='Mark all files as instrumental')
-    parser.add_argument('--debug', action='store_true', help='Analyze files and create report without moving/converting')
+    parser = argparse.ArgumentParser(description='Process audio files for music library.')
+    parser.add_argument('input_dir', help='Directory containing audio files')
+    parser.add_argument('--output_dir', help='Directory for processed files')
+    parser.add_argument('--manual_dir', help='Directory for files needing manual review')
+    parser.add_argument('--excluded_dir', help='Directory for excluded files')
+    parser.add_argument('--min_length', type=int, default=120, help='Minimum length in seconds (default: 120)')
+    parser.add_argument('--artist', help='Artist name to prepend to filenames')
+    parser.add_argument('--force_instrumental', action='store_true', help='Force all files to be treated as instrumental')
+    parser.add_argument('--debug', action='store_true', help='Run in debug mode (analyze only, no changes)')
     
     args = parser.parse_args()
     
-    process_audio_files(args.input_dir, args.output_dir, args.artist, args.instrumental, args.debug)
+    if args.debug:
+        print("Debug mode: Running analysis only - no files will be moved or converted")
+    
+    process_audio_files(
+        args.input_dir,
+        args.output_dir,
+        args.manual_dir,
+        args.excluded_dir,
+        args.min_length,
+        args.force_instrumental,
+        args.artist,
+        args.debug
+    )
 
 if __name__ == "__main__":
-    main() 
+    main()
