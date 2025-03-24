@@ -1,108 +1,95 @@
-# MP3 to WAV Converter
+# Audio File Processing Script
 
-This script converts MP3 files to high quality WAV files (Stereo, 16-bit, 44.1kHz) and renames them according to the format: `artistname_songname.wav` or `artistname_songnameinstrumental.wav`. Songs shorter than 2 minutes are automatically moved to an 'Excluded' folder.
+A Python script for converting and organizing audio files according to specific naming conventions and quality standards.
 
 ## Requirements
 
-- Python 3.6+
-- Required packages:
-  - pydub
-  - eyed3
+- Python 3.x
+- pydub
+- eyed3
+- reportlab
 
 ## Installation
 
-Install the required packages using pip:
-
 ```bash
-pip install pydub eyed3
+pip install -r requirements.txt
 ```
-
-Note: pydub requires ffmpeg or libav to be installed on your system.
-
-- For Mac (using Homebrew):
-  ```bash
-  brew install ffmpeg
-  ```
-
-- For Windows:
-  Download from [FFmpeg website](https://ffmpeg.org/download.html) and add to PATH
-
-- For Linux:
-  ```bash
-  sudo apt-get install ffmpeg
-  ```
 
 ## Usage
 
+Basic usage:
 ```bash
-python convert_to_wav.py [input_directory] [--output_dir OUTPUT_DIRECTORY] [--batch] [--artist ARTIST_NAME] [--instrumental]
+python convert_to_wav.py <input_directory>
 ```
 
-### Arguments:
-
-- `input_directory`: Directory containing the MP3 files (required)
-- `--output_dir`: Directory to save the converted WAV files (optional, defaults to input directory)
-- `--batch`: Enable batch mode to use metadata without asking for input (optional)
-- `--artist`: Default artist name to use for all files (optional, skips all prompts and uses filenames as song names)
-- `--instrumental`: Mark all songs as instrumentals (optional, adds "instrumental" to all filenames)
-
-### Examples:
-
-Convert MP3 files in the current directory:
+With options:
 ```bash
-python convert_to_wav.py .
+python convert_to_wav.py <input_directory> --output_dir <output_directory> --artist "artist_name" --instrumental
 ```
 
-Convert MP3 files and save WAVs to a different directory:
-```bash
-python convert_to_wav.py ~/Music/mp3s --output_dir ~/Music/wavs
-```
+## Processing Rules
 
-Use batch mode for automatic conversion using metadata:
-```bash
-python convert_to_wav.py ~/Music/mp3s --batch
-```
+1. File Type Rules:
+   - Accepts both .mp3 and .wav files as input
+   - Converts all files to .wav format with specs:
+     * Stereo (2 channels)
+     * 44.1kHz sample rate
+     * 16-bit depth
 
-Set the same artist name for all files (without any prompts):
-```bash
-python convert_to_wav.py ~/Music/mp3s --artist "Artist Name"
-```
+2. Duration Rule:
+   - Files shorter than 2 minutes are moved to `Excluded/` folder
+   - Reason marked as "Too short"
 
-Mark all songs as instrumentals:
-```bash
-python convert_to_wav.py ~/Music/mp3s --instrumental
-```
+3. Vox/Instrumental Pair Detection (Priority 1):
+   - Identifies files with "with vox" or "+ vox" in name
+   - Both the vox file and its matching base file go to `manually/`
+   - Reason marked as "Type undetermined"
 
-Combine options:
-```bash
-python convert_to_wav.py ~/Music/mp3s --output_dir ~/Music/wavs --artist "Artist Name" --instrumental
-```
+4. Version Conflict Detection (Priority 2):
+   - Multiple files sharing exact same base name (e.g., "SONG.mp3" and "SONG 123.mp3")
+   - All versions moved to `manually/`
+   - Reason marked as "Versioning"
 
-## How It Works
+5. Manual Processing Triggers:
+   - Files with explicit version numbers (V1, V2, etc.)
+   - Files with length variants in name (short, long, longer)
+   - Purely numeric filenames (e.g., "12345.mp3")
 
-1. The script scans the input directory for MP3 files
-2. For each MP3 file:
-   - Checks if the song duration is at least 2 minutes
-   - If duration is less than 2 minutes, moves the MP3 to the 'Excluded' folder
-   - Otherwise:
-     - Converts it to WAV format with stereo, 16-bit, 44.1kHz quality
-     - If `--artist` is provided:
-       - Uses that name for all files
-       - Uses the MP3 filename (without extension) as the song name
-       - No user prompts will appear
-     - If `--instrumental` is provided:
-       - Adds "instrumental" to all filenames
-     - Otherwise:
-       - Attempts to extract artist and song information from ID3 tags
-       - Asks for input if information is missing or if not in batch mode
-     - Saves the file in the format: `artistname_songname.wav` or `artistname_songnameinstrumental.wav`
+6. Filename Cleaning Rules:
+   - Convert to lowercase
+   - Replace spaces with underscores
+   - Remove:
+     * Technical specs (khz, bit)
+     * Numbers after hyphens
+     * Special characters
+     * Multiple underscores
+     * Trailing underscores
+   - Add "instrumental" suffix if:
+     * File has instrumental indicators ("no vox", "instrumental", etc.)
+     * `--instrumental` flag is used
+   - Add artist prefix if `--artist` flag is used
 
-## Notes
+7. Directory Structure:
+   - `processed/` - Successfully converted files
+   - `manually/` - Files needing manual review
+   - `Excluded/` - Files that are too short or had errors
 
-- Songs shorter than 2 minutes are automatically moved to an 'Excluded' folder
-- Files that fail to process are also moved to the 'Excluded' folder
-- All output filenames are converted to lowercase
-- When using `--artist`, the script uses MP3 filenames as song names and never prompts the user
-- When using `--instrumental`, all songs are marked as instrumentals regardless of content
-- Spaces in filenames are automatically replaced with underscores
-- Illegal filename characters are removed from artist and song names 
+8. Error Handling:
+   - Files that fail processing are moved to `Excluded/`
+   - Reason marked as "Processing error"
+
+## Command Line Options
+
+- `input_directory`: Directory containing the audio files to process
+- `--output_dir`: Optional. Directory to save processed files (defaults to input directory)
+- `--artist`: Optional. Artist name to prefix to all filenames
+- `--instrumental`: Optional. Mark all files as instrumentals
+
+## Output
+
+The script creates three directories:
+1. `processed/` - Contains all successfully converted WAV files
+2. `manually/` - Contains files that need manual review
+3. `Excluded/` - Contains files that are either too short (< 2 minutes) or failed to process
+
+A PDF report is generated in the processed directory with details of all processed files. 
