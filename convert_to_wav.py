@@ -52,17 +52,27 @@ def clean_filename(filename, is_instrumental=False, artist=None):
     return clean_name + ".wav"
 
 def get_audio_length(file_path, debug=False):
-    """Get audio length in seconds with timeout protection."""
-    # In debug mode, just return a valid length - no file processing
-    if debug:
-        return 180  # Return 3 minutes as default length
+    """
+    Get the length of an audio file in seconds.
     
+    Args:
+        file_path: Path to the audio file
+        debug: If True, return a conservative estimate based on file size
+        
+    Returns:
+        float: Length in seconds
+    """
     try:
+        # Use pydub to get actual length
         audio = AudioSegment.from_file(file_path)
-        return len(audio) / 1000  # Convert ms to seconds
+        return len(audio) / 1000.0  # Convert ms to seconds
     except Exception as e:
-        print(f"Error checking file {file_path}: {e}")
-        return 0
+        print(f"Error getting length of {file_path}: {e}")
+        # Fallback for debug mode
+        if debug:
+            # Assumption: ~1MB per minute for MP3s as a very conservative estimate
+            return os.path.getsize(file_path) / (1024 * 1024) * 60
+        return 0  # If not debug, safer to return 0
 
 def find_duplicates(files, force_instrumental=False, artist=None):
     """Find duplicate files based on their base names and potential output filename collisions."""
@@ -384,7 +394,7 @@ def process_audio_files(input_dir, output_dir=None, manual_dir=None, excluded_di
         for filename in to_process:
             input_file = os.path.join(input_dir, filename)
             try:
-                # Determine if track is instrumental
+                # Determine if track is instrumental based on filename
                 is_instrumental_track = force_instrumental or is_instrumental(filename)
                 
                 # Generate clean output filename
