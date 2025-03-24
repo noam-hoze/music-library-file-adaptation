@@ -47,7 +47,7 @@ def clean_filename(filename, is_instrumental=False, artist=None):
     
     # Add instrumental suffix if needed
     if is_instrumental:
-        clean_name += "instrumental"
+        clean_name += "_instrumental"
     
     return clean_name + ".wav"
 
@@ -106,9 +106,24 @@ def find_duplicates(files, force_instrumental=False, artist=None):
     # Find base names with multiple files or output name collisions
     duplicates = {}
     
-    # First add regular duplicates
+    # First add regular duplicates, but handle the special case of instrumental/vocal pairs
     for base_name, files_list in base_names.items():
         if len(files_list) > 1:
+            # Special handling for instrumental/vocal pairs
+            # If the group only contains 2 files, and one is instrumental while the other isn't,
+            # then they are not duplicates but a valid instrumental/vocal pair
+            if len(files_list) == 2:
+                file1 = os.path.basename(files_list[0]) if os.path.sep in files_list[0] else files_list[0]
+                file2 = os.path.basename(files_list[1]) if os.path.sep in files_list[1] else files_list[1]
+                
+                is_instrumental1 = is_instrumental(file1)
+                is_instrumental2 = is_instrumental(file2)
+                
+                # If one is instrumental and the other isn't, they're a valid pair, not duplicates
+                if is_instrumental1 != is_instrumental2:
+                    continue
+                
+            # Otherwise (more than 2 files or both/neither instrumental), they're duplicates
             duplicates[base_name] = files_list
     
     # Then add output name collisions
