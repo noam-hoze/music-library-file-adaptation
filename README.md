@@ -46,9 +46,10 @@ python convert_to_wav.py [input_dir] [options]
 ```
 
 By default (with no arguments), the script will:
-- Process files from `songs/jiminy`
-- Output to `songs/jiminy_converted`
-- Use "jiminy" as the artist name
+- Process files from `songs/scorecraft`
+- Output to `songs/scorecraft_converted`
+- Use "scorecraft" as the artist name
+- Skip minimum length check (processes all files regardless of duration)
 
 ### Options
 
@@ -57,6 +58,7 @@ By default (with no arguments), the script will:
 --manual_dir DIR      Directory for files needing manual review
 --excluded_dir DIR    Directory for excluded files
 --min_length SEC      Minimum length in seconds (default: 120)
+--no_length_check     Disable the minimum length check (default: enabled)
 --artist NAME         Artist name to prepend to filenames
 --force_instrumental  Force all files to be treated as instrumental
 --debug               Run in debug mode (analyze only, no changes)
@@ -65,11 +67,26 @@ By default (with no arguments), the script will:
 ## Features
 
 - Converts audio files to 16-bit, 44.1kHz WAV format
-- Standardizes filenames (lowercase, underscores)
-- Detects instrumental tracks and adds "_instrumental" suffix
-- Excludes files shorter than minimum length
+- Standardizes filenames:
+  - Lowercase
+  - Words concatenated directly (no spaces or underscores)
+  - Artist name added as prefix with underscore separator
+  - "instrumental" suffix for instrumental tracks
+- Detects instrumental tracks and adds "instrumental" suffix
+- Excludes files shorter than minimum length (if length check enabled)
 - Identifies duplicates for manual review
 - Generates detailed PDF report after processing
+
+## Directory Structure
+
+After processing, the following directory structure is created:
+
+```
+output_dir/ (e.g., songs/scorecraft_converted/)
+  ├── processed/  (successfully converted files)
+  ├── manual/     (files needing manual review)
+  └── excluded/   (files that are too short or had errors)
+```
 
 ## Instrumental Detection
 
