@@ -278,6 +278,8 @@ def process_audio_files(input_dir, output_dir=None, manual_dir=None, excluded_di
     # Set up output directories
     if output_dir is None:
         output_dir = os.path.join(input_dir, "processed")
+    
+    processed_dir = os.path.join(output_dir, "processed")
     if manual_dir is None:
         manual_dir = os.path.join(output_dir, "manual")
     if excluded_dir is None:
@@ -286,8 +288,9 @@ def process_audio_files(input_dir, output_dir=None, manual_dir=None, excluded_di
     # Always create the output directory for the report, even in debug mode
     os.makedirs(output_dir, exist_ok=True)
     
-    # Create manual and excluded directories only if not in debug mode
+    # Create processed, manual and excluded directories only if not in debug mode
     if not debug:
+        os.makedirs(processed_dir, exist_ok=True)
         os.makedirs(manual_dir, exist_ok=True)
         os.makedirs(excluded_dir, exist_ok=True)
     
@@ -353,6 +356,9 @@ def process_audio_files(input_dir, output_dir=None, manual_dir=None, excluded_di
             if length < min_length:
                 excluded_files['short'].append(filename)
                 is_short = True
+                # Copy short file to excluded directory
+                if not debug:
+                    shutil.copy2(file_path, os.path.join(excluded_dir, filename))
             else:
                 valid_files.append(file)
                 if debug:
@@ -412,7 +418,7 @@ def process_audio_files(input_dir, output_dir=None, manual_dir=None, excluded_di
                 
                 # Generate clean output filename
                 output_filename = clean_filename(filename, is_instrumental_track, artist)
-                output_file = os.path.join(output_dir, output_filename)
+                output_file = os.path.join(processed_dir, output_filename)
                 
                 # Convert file to WAV (16-bit, 44.1kHz)
                 audio = AudioSegment.from_file(input_file)
