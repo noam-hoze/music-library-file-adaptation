@@ -36,9 +36,7 @@ def clean_filename(filename, is_instrumental=False, artist=None):
     clean_name = re.sub(r'with.*vox|\+.*vox|no.*vox|instrumental', '', clean_name, flags=re.IGNORECASE)  # Remove vox/instrumental indicators
     clean_name = re.sub(r'[^\w\s]', '', clean_name)  # Remove special characters
     clean_name = clean_name.strip()  # Remove leading/trailing whitespace
-    clean_name = re.sub(r'\s+', '_', clean_name)  # Replace spaces with underscores
-    clean_name = re.sub(r'_+', '_', clean_name)  # Replace multiple underscores with single underscore
-    clean_name = clean_name.rstrip('_')  # Remove trailing underscores
+    clean_name = re.sub(r'\s+', '', clean_name)  # Remove spaces completely
     clean_name = clean_name.lower()  # Convert to lowercase
     
     # Add artist prefix if provided
@@ -47,7 +45,7 @@ def clean_filename(filename, is_instrumental=False, artist=None):
     
     # Add instrumental suffix if needed
     if is_instrumental:
-        clean_name += "_instrumental"
+        clean_name += "instrumental"
     
     return clean_name + ".wav"
 
