@@ -477,6 +477,7 @@ def main():
     parser.add_argument('--manual_dir', help='Directory for files needing manual review')
     parser.add_argument('--excluded_dir', help='Directory for excluded files')
     parser.add_argument('--min_length', type=int, default=120, help='Minimum length in seconds (default: 120)')
+    parser.add_argument('--no_length_check', action='store_true', default=True, help='Disable the minimum length check')
     parser.add_argument('--artist', help='Artist name to prepend to filenames')
     parser.add_argument('--force_instrumental', action='store_true', help='Force all files to be treated as instrumental')
     parser.add_argument('--debug', action='store_true', help='Run in debug mode (analyze only, no changes)')
@@ -485,6 +486,11 @@ def main():
     
     if args.debug:
         print("Debug mode: Running analysis only - no files will be moved or converted")
+    
+    # If no_length_check is enabled, set min_length to 0
+    if args.no_length_check:
+        args.min_length = 0
+        print("Minimum length check disabled - processing all files regardless of duration")
     
     process_audio_files(
         args.input_dir,
